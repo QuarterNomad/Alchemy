@@ -57,7 +57,7 @@ CLI `--design-system` raw output is **not** the source of truth. The following r
 
 Primary is a highlight (filled search, active nav pill, metric badge). Do not paint large chrome with it. Do not use Element `warning` orange for export.
 
-Element `$--color-primary`, Vuex `settings.theme` default, ThemePicker `ORIGINAL_THEME`, and sidebar active color must all be `#15803D`. If `localStorage` `layout-setting.theme` is `#409EFF` or `#1890ff`, treat as unset and migrate.
+Element `$--color-primary`, Vuex `settings.theme` default, and sidebar active color must all be `#15803D`. If `localStorage` `layout-setting.theme` is `#409EFF` or `#1890ff`, treat as unset and migrate.
 
 ## Spacing
 
