@@ -10,8 +10,8 @@
 | --- | --- | --- |
 | MySQL | `ruoyi-admin/src/main/resources/application-druid.yml` | 示例：`jdbc:mysql://<host>:3306/<db>`，库名以环境为准（如 `appdb`） |
 | Redis | `ruoyi-admin/src/main/resources/application.yml` → `spring.data.redis` | 默认 db `0`；密码用占位符 `<redis-password>` |
-| 初始化 SQL | `sql/ry_20260417.sql` | 若依系统表 + Alchemy 扩展/业务表 |
-| 增量 SQL | `sql/patch_stock_watchlist.sql`、`sql/patch_stock_roe.sql`、`sql/patch_stock_dividend.sql`、`sql/patch_drop_code_gen.sql`、`sql/patch_guest_login.sql`、`sql/patch_sys_notice_menu.sql`、`sql/patch_stock_screen_job_cron.sql` | 已有生产库增量变更（用户自选、ROE、分红缓存、去掉代码生成菜单/空表、共享访客、通知公告菜单、筛股定时任务 cron） |
+| 初始化 SQL | `sql/ry_20260417.sql`、`sql/stock_market_cache.sql` | 若依系统表 + Alchemy 扩展/业务表（含 Tushare 缓存） |
+| 增量 SQL | `sql/patch_stock_watchlist.sql`、`sql/patch_stock_roe.sql`、`sql/patch_stock_dividend.sql`、`sql/patch_drop_code_gen.sql`、`sql/patch_guest_login.sql`、`sql/patch_sys_notice_menu.sql`、`sql/patch_stock_screen_job_cron.sql`、`sql/patch_member_menu_stock_list.sql`、`sql/patch_disable_captcha.sql`、`sql/patch_drop_system_tools.sql` | 已有生产库增量变更（用户自选、ROE、分红缓存、去掉代码生成菜单/空表、共享访客、通知公告菜单、筛股定时任务 cron、会员股票列表菜单、关闭图形验证码、去掉系统工具菜单） |
 | Quartz SQL | `sql/quartz.sql` | Quartz 引擎内部表 `QRTZ_*`（见下文「未导入」） |
 
 文档与 Agent 回复中 **勿写真实主机、账号、密码**；只使用上表占位符。
@@ -22,16 +22,16 @@ Key 常量统一定义在：`ruoyi-common/.../constant/CacheConstants.java`。
 
 ## MySQL：系统表 vs 新建/扩展
 
-Alchemy 当前库（以 `ry_20260417.sql` 为准）共 **23 张业务相关表**（不含未导入的 `QRTZ_*`）。
+Alchemy 当前库（以 `ry_20260417.sql` 与 `sql/stock_market_cache.sql` 为准）共 **27 张业务相关表**（不含未导入的 `QRTZ_*`）。
 
 ### 分类总览
 
 | 类别 | 表数量 | 持久化 | 筛股业务 |
 | --- | --- | --- | --- |
-| 若依标准系统表 | 17 | 是 | 不涉及 |
+| 若依标准系统表 | 16 | 是 | 不涉及 |
 | **Alchemy 新建/扩展** | **11** | 是 | 筛股结果 2 张 + Tushare 缓存 7 张 + 公告已读 1 张 + 用户自选 1 张 |
 
-### 若依标准系统表（17 张）
+### 若依标准系统表（16 张）
 
 RuoYi 后台管理框架自带，**不是筛股业务数据**：
 
@@ -45,7 +45,6 @@ RuoYi 后台管理框架自带，**不是筛股业务数据**：
 | `sys_user_role` | 用户 ↔ 角色 |
 | `sys_role_menu` | 角色 ↔ 菜单 |
 | `sys_user_post` | 用户 ↔ 岗位 |
-| `sys_role_dept` | 角色 ↔ 部门 |
 | `sys_config` | 系统参数（注册开关、验证码开关等） |
 | `sys_dict_type` / `sys_dict_data` | 数据字典 |
 | `sys_oper_log` | 操作日志 |
@@ -83,7 +82,7 @@ RuoYi 后台管理框架自带，**不是筛股业务数据**：
 | `stock_screen_result` | 单次运行的股票明细（PE、PB、ROE、MA120 信号等） | N，外键 `run_id` → `stock_screen_run` |
 
 - 策略示例：`HIGH_DIVIDEND_MA120`
-- 菜单：`股票筛选` → `筛股结果`；权限前缀 `stock:screener:*`
+- 菜单：`股票列表`；权限前缀 `stock:screener:*`
 - Controller：`ruoyi-admin/.../controller/stock/StockScreenResultController.java`
 - 定时任务：`StockScreeningTask.refreshLatest` → ProcessBuilder 运行 `python -m jobs.daily_run`（sync + screen + 写结果表）。调度 `0 0/30 17-21 * * ?`（每天 17:00–21:30 每 30 分钟）；非交易日、当天已成功或估值未到则 CLI **exit 0** 不写失败 run。Quartz 用 **JVM 时区**，生产需 `Asia/Shanghai`。存量库执行 `sql/patch_stock_screen_job_cron.sql` 后须**重启 Java**（调度在内存，改 `sys_job` 不会热更新）。后台改 cron 时 `JOB_WHITELIST_STR` 须含 `com.ruoyi.web.task`，否则保存 invoke_target 会被拒。
 - **原始行情缓存与筛股结果均落 MySQL，不走 Redis**
@@ -193,7 +192,7 @@ Redis 在本项目中 **仅用于缓存与会话**，无「业务表」式设计
 
 ### 筛股业务与 Redis
 
-**无任何** `stock_*` / screener 相关 Redis Key。Python 筛股服务计算完成后由 Java 侧写入 MySQL `stock_screen_run` / `stock_screen_result`。
+**无任何** `stock_*` / screener 相关 Redis Key。筛股结果由 CLI 写入 MySQL `stock_screen_run` / `stock_screen_result`。
 
 ---
 
@@ -201,7 +200,7 @@ Redis 在本项目中 **仅用于缓存与会话**，无「业务表」式设计
 
 ```text
 MySQL (<db>)
-├── sys_* / gen_*              ← 若依框架
+├── sys_*                      ← 若依框架
 ├── stock_screen_run           ← Alchemy 筛股（持久化）
 ├── stock_screen_result        ← Alchemy 筛股（持久化）
 ├── stock_fina_indicator       ← Alchemy Tushare 财务指标缓存（持久化）
